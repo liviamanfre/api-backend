@@ -1,82 +1,96 @@
-// src/products/products.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common'; // Importe NotFoundException
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-}
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ProductEntity } from './entities/product.entity';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
 
 @Injectable()
 export class ProductsService {
+  /**
+   * O construtor injeta o repositório do TypeORM para a entidade ProductEntity.
+   * A partir de agora, `this.productRepository` pode ser usado para executar
+   * operações de banco de dados na tabela 'products'.
+   * @param productRepository - O repositório injetado para a entidade Product.
+   */
+  constructor(
+    @InjectRepository(ProductEntity)
+    private readonly productRepository: Repository<ProductEntity>,
+  ) {}
 
-  private products: Product[] = []; // Array em memória para simular o DB
-  private nextId = 1; // Começaremos IDs do 1
-
-  // Para demonstração, vamos adicionar alguns produtos iniciais
-  constructor() {
-    this.create({ name: 'Fone de Ouvido', price: 99.99 });
-    this.create({ name: 'Teclado Mecânico', price: 150.00 });
-    this.create({ name: 'Mouse Gamer', price: 75.50 });
+  /**
+   * Cria um novo produto no banco de dados.
+   * @param createProductDto - O DTO com os dados para criar o novo produto.
+   * @returns A entidade do produto recém-criado.
+   */
+  async create(createProductDto: CreateProductDto): Promise<ProductEntity> {
+    // Cria uma instância da entidade com base no DTO, mas ainda não salva no banco.
+    const newProduct = this.productRepository.create(createProductDto);
+    // Salva a entidade no banco de dados e retorna o resultado.
+    return await this.productRepository.save(newProduct);
   }
 
-  findAll(): Product[] {
-    return this.products; // Retorna o array de produtos
+  /**
+   * Busca e retorna todos os produtos do banco de dados.
+   * @returns Uma lista (array) de todas as entidades de produto.
+   */
+  async findAll(): Promise<ProductEntity[]> {
+    // .find() sem argumentos retorna todos os registros da tabela.
+    return await this.productRepository.find();
   }
 
-  
-  findOne(id: number): Product | undefined {
-    return this.products.find(product => product.id === id);
-  }
+  /**
+   * Busca um único produto pelo seu ID.
+   * @param id - O ID do produto a ser encontrado.
+   * @returns A entidade do produto encontrado.
+   * @throws {NotFoundException} se nenhum produto com o ID fornecido for encontrado.
+   */
+  async findOne(id: number): Promise<ProductEntity> {
+    // .findOneBy() busca o primeiro registro que corresponde aos critérios.
+    const product = await this.productRepository.findOneBy({ id });
 
-  // Alternativa para findOne: Lança um erro se o produto não for encontrado
-  findOneOrThrow(id: number): Product {
-    const product = this.products.find(p => p.id === id);
     if (!product) {
-      throw new NotFoundException(`Produto com ID ${id} não encontrado.`);
+      throw new NotFoundException(`Produto com ID #${id} não encontrado.`);
     }
+
     return product;
   }
 
-  create(product: { name: string; price: number }): Product {
-    const newProduct = { id: this.nextId++, ...product };
-    this.products.push(newProduct);
-    return newProduct;
-  }
+  /**
+   * Atualiza os dados de um produto existente.
+   * @param id - O ID do produto a ser atualizado.
+   * @param updateProductDto - O DTO com os dados a serem atualizados.
+   * @returns A entidade do produto com os dados atualizados.
+   * @throws {NotFoundException} se o produto a ser atualizado não for encontrado.
+   */
+  async update(id: number, updateProductDto: UpdateProductDto): Promise<ProductEntity> {
+    // .preload() encontra a entidade pelo ID e mescla os novos dados do DTO nela.
+    // Retorna a entidade mesclada, mas ainda não salva.
+    const product = await this.productRepository.preload({
+      id: id,
+      ...updateProductDto,
+    });
 
- 
-  update(id: number, product: { name?: string; price?: number }): Product | undefined {
-    const index = this.products.findIndex(p => p.id === id);
-    if (index > -1) {
-      this.products[index] = { ...this.products[index], ...product };
-      return this.products[index];
+    if (!product) {
+      throw new NotFoundException(`Produto com ID #${id} não encontrado para atualizar.`);
     }
-    return undefined; // Retorna undefined se não encontrou (ou lance um erro)
+
+    // Salva a entidade atualizada de volta no banco de dados.
+    return await this.productRepository.save(product);
   }
 
-  
-  updateOrThrow(id: number, product: { name?: string; price?: number }): Product {
-    const index = this.products.findIndex(p => p.id === id);
-    if (index === -1) {
-      throw new NotFoundException(`Produto com ID ${id} não encontrado para atualização.`);
-    }
-    this.products[index] = { ...this.products[index], ...product };
-    return this.products[index];
-  }
+  /**
+   * Remove um produto do banco de dados pelo seu ID.
+   * @param id - O ID do produto a ser removido.
+   * @returns Uma promessa vazia (void) após a remoção.
+   * @throws {NotFoundException} se o produto a ser removido não for encontrado.
+   */
+  async remove(id: number): Promise<void> {
+    // Reutilizamos o método findOne para garantir que o produto exista antes de tentar removê-lo.
+    // Isso também aciona a NotFoundException se ele não existir.
+    const product = await this.findOne(id);
 
-  
-  remove(id: number): boolean {
-    const initialLength = this.products.length;
-    this.products = this.products.filter(p => p.id !== id); // Reatribuição do array
-    return this.products.length < initialLength; // Retorna true se um produto foi removido
-  }
-
-  
-  removeOrThrow(id: number): void {
-    const index = this.products.findIndex(p => p.id === id);
-    if (index === -1) {
-      throw new NotFoundException(`Produto com ID ${id} não encontrado para remoção.`);
-    }
-    this.products.splice(index, 1); // Remove no local
+    // .remove() exclui a entidade do banco de dados.
+    await this.productRepository.remove(product);
   }
 }
