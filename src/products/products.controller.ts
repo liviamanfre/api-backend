@@ -8,73 +8,79 @@ import {
   Delete,
   HttpCode,
   HttpStatus,
-  ParseIntPipe, // Pipe para transformar e validar o ID
   UseGuards,
+  Query,
+  DefaultValuePipe,
+  ParseIntPipe,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductEntity } from './entities/product.entity';
-import { AuthGuard } from '@nestjs/passport'; // Importa o AuthGuard para proteger as rotas
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '../common/enum/role.enum';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { GetUser } from '../auth/decorators/get-user.decorator';
+import type { UserPayload } from '../auth/interfaces/user-payload.interface';
 
 /**
- * O Controller é responsável por receber as requisições HTTP,
- * delegar a lógica de negócio para o Service e retornar a resposta.
- * O decorator @Controller('products') define '/products' como o prefixo de rota
- * para todos os endpoints definidos nesta classe.
+ * Controller responsável por todos os endpoints relacionados a produtos.
+ * Todas as rotas aqui são protegidas e requerem um token JWT válido,
+ * pois o AuthGuard é aplicado no nível da classe.
  */
 @Controller('products')
-@UseGuards(AuthGuard('jwt')) // Aplica o guard de autenticação JWT a todas as rotas deste controller
+@UseGuards(AuthGuard('jwt'))
 export class ProductsController {
-  /**
-   * O construtor injeta a instância do ProductsService,
-   * permitindo que o controller utilize seus métodos.
-   * @param productsService - A instância do serviço de produtos.
-   */
   constructor(private readonly productsService: ProductsService) {}
 
   /**
-   * Rota para criar um novo produto.
-   * Mapeado para o método HTTP POST em '/products'.
-   * O @Body() decorator extrai os dados do corpo da requisição e os valida
-   * usando o CreateProductDto.
+   * Cria um novo produto e o associa ao usuário autenticado.
    * @param createProductDto - Dados para a criação do produto.
+   * @param user - Payload do usuário extraído do token JWT pelo decorator @GetUser.
    * @returns O produto recém-criado.
    */
   @Post()
   async create(
     @Body() createProductDto: CreateProductDto,
+    @GetUser() user: UserPayload,
   ): Promise<ProductEntity> {
-    return await this.productsService.create(createProductDto);
+    const userId = user.userId;
+    return await this.productsService.create(createProductDto, userId);
   }
 
   /**
-   * Rota para listar todos os produtos.
-   * Mapeado para o método HTTP GET em '/products'.
-   * @returns Uma lista de todos os produtos.
+   * Retorna uma lista paginada de produtos.
+   * @param page - O número da página a ser retornada. Padrão: 1.
+   * @param limit - O número de itens por página. Padrão: 10.
+   * @returns Uma lista de produtos.
    */
   @Get()
-  async findAll(): Promise<ProductEntity[]> {
-    return await this.productsService.findAll();
+  async findAll(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+  ) {
+    // Garante que o limite não seja excessivo para proteger o servidor
+    limit = limit > 100 ? 100 : limit;
+    return await this.productsService.findAll({ page, limit });
   }
 
   /**
-   * Rota para buscar um produto específico pelo seu ID.
-   * Mapeado para o método HTTP GET em '/products/:id'.
-   * O @Param('id', ParseIntPipe) extrai o ID da URL,
-   * e o ParseIntPipe o transforma de string para número, além de validar se é um número inteiro.
+   * Busca um produto específico pelo seu ID.
    * @param id - O ID do produto a ser buscado.
    * @returns O produto encontrado.
    */
   @Get(':id')
-  async findOne(@Param('id', ParseIntPipe) id: number): Promise<ProductEntity> {
-    // O ParseIntPipe já fez a conversão de string para number
+  async findOne(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ProductEntity> {
     return await this.productsService.findOne(id);
   }
 
   /**
-   * Rota para atualizar um produto existente.
-   * Mapeado para o método HTTP PUT em '/products/:id'.
+   * Atualiza um produto existente.
+   * (Para um cenário real, você adicionaria uma lógica no service para
+   * verificar se o usuário logado é o dono do produto antes de atualizar).
    * @param id - O ID do produto a ser atualizado.
    * @param updateProductDto - Os dados para atualização.
    * @returns O produto com os dados atualizados.
@@ -88,14 +94,15 @@ export class ProductsController {
   }
 
   /**
-   * Rota para remover um produto.
-   * Mapeado para o método HTTP DELETE em '/products/:id'.
-   * O decorator @HttpCode(HttpStatus.NO_CONTENT) faz com que a resposta
-   * retorne o status 204 (No Content) em caso de sucesso, que é a convenção
-   * para operações de exclusão bem-sucedidas.
+   * Remove um produto.
+   * Esta rota é protegida por dois Guards:
+   * 1. AuthGuard('jwt'): Garante que o usuário está autenticado.
+   * 2. RolesGuard: Garante que o usuário autenticado tem o papel de 'Admin'.
    * @param id - O ID do produto a ser removido.
    */
   @Delete(':id')
+  @Roles(Role.Admin)
+  @UseGuards(RolesGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   async remove(@Param('id', ParseIntPipe) id: number): Promise<void> {
     return await this.productsService.remove(id);
